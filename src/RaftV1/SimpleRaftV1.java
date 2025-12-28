@@ -19,7 +19,7 @@ import java.util.concurrent.ThreadLocalRandom;
  *   Volatile state on leaders:
  *     - nextIndex[follower], matchIndex[follower]
  *
- * (See “Pseudo Code” state slide.)  [oai_citation:1‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+ * (See “Pseudo Code” state slide.)
  */
 public class SimpleRaftV1 {
 
@@ -42,7 +42,7 @@ public class SimpleRaftV1 {
         @Override public String toString() { return "(" + term + ":" + command + ")"; }
     }
 
-    /** RequestVote RPC arguments (see RequestVote slide).  [oai_citation:2‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861) */
+    /** RequestVote RPC arguments (see RequestVote slide). */
     static class RequestVoteArgs {
         final int term;           // candidate’s term
         final int candidateId;    // candidate requesting vote
@@ -57,7 +57,7 @@ public class SimpleRaftV1 {
         }
     }
 
-    /** RequestVote RPC result (see RequestVote slide).  [oai_citation:3‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861) */
+    /** RequestVote RPC result (see RequestVote slide). */
     static class RequestVoteReply {
         final int term;           // currentTerm, for candidate to update itself
         final boolean voteGranted;
@@ -68,7 +68,7 @@ public class SimpleRaftV1 {
         }
     }
 
-    /** AppendEntries RPC arguments (see AppendEntries slide).  [oai_citation:4‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861) */
+    /** AppendEntries RPC arguments (see AppendEntries slide) */
     static class AppendEntriesArgs {
         final int term;           // leader’s term
         final int leaderId;       // so follower can redirect clients
@@ -88,7 +88,7 @@ public class SimpleRaftV1 {
         }
     }
 
-    /** AppendEntries RPC result (see AppendEntries slide).  [oai_citation:5‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861) */
+    /** AppendEntries RPC result (see AppendEntries slide).*/
     static class AppendEntriesReply {
         final int term;       // currentTerm for leader to update itself
         final boolean success;
@@ -150,7 +150,7 @@ public class SimpleRaftV1 {
         static long now() { return System.currentTimeMillis(); }
 
         static long randomElectionTimeout() {
-            // Slides: randomized election timeouts to avoid split vote.  [oai_citation:6‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Slides: randomized election timeouts to avoid split vote.
             // Use a range like [300..600]ms for toy simulation.
             return ThreadLocalRandom.current().nextLong(300, 600);
         }
@@ -176,16 +176,16 @@ public class SimpleRaftV1 {
             long elapsed = now() - lastHeardFromLeaderOrCandidateMs;
 
             if (role != Role.LEADER && elapsed > electionTimeoutMs) {
-                // Follower election timeout => become candidate and start election.  [oai_citation:7‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                // Follower election timeout => become candidate and start election.
                 startElection();
             }
 
             if (role == Role.LEADER) {
-                // Leader sends periodic heartbeats to maintain authority.  [oai_citation:8‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                // Leader sends periodic heartbeats to maintain authority.
                 sendHeartbeats();
             }
 
-            // All servers: if commitIndex > lastApplied, apply entries in order.  [oai_citation:9‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // All servers: if commitIndex > lastApplied, apply entries in order.
             applyCommittedEntries();
         }
 
@@ -197,7 +197,7 @@ public class SimpleRaftV1 {
             role = Role.FOLLOWER;
             leaderId = newLeaderId;
 
-            // If RPC contains higher term, update currentTerm and convert to follower.  [oai_citation:10‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // If RPC contains higher term, update currentTerm and convert to follower.
             if (newTerm > currentTerm) {
                 currentTerm = newTerm;
                 votedFor = null;
@@ -212,7 +212,7 @@ public class SimpleRaftV1 {
             role = Role.LEADER;
             leaderId = id;
 
-            // Initialize leader volatile state: nextIndex = lastLogIndex+1; matchIndex = -1.  [oai_citation:11‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Initialize leader volatile state: nextIndex = lastLogIndex+1; matchIndex = -1.
             nextIndex = new int[peers.size()];
             matchIndex = new int[peers.size()];
             for (int i = 0; i < peers.size(); i++) {
@@ -220,7 +220,7 @@ public class SimpleRaftV1 {
                 matchIndex[i] = -1;
             }
 
-            // On election: send initial empty AppendEntries (heartbeat).  [oai_citation:12‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // On election: send initial empty AppendEntries (heartbeat).
             sendHeartbeats();
         }
 
@@ -231,7 +231,7 @@ public class SimpleRaftV1 {
         void startElection() {
             role = Role.CANDIDATE;
 
-            // Candidate rules: increment term, vote for self, reset election timer, send RequestVote to all.  [oai_citation:13‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Candidate rules: increment term, vote for self, reset election timer, send RequestVote to all.
             currentTerm++;
             votedFor = id;
             lastHeardFromLeaderOrCandidateMs = now();
@@ -252,7 +252,7 @@ public class SimpleRaftV1 {
                 if (p.id == this.id) continue;
                 RequestVoteReply reply = p.receiveRequestVote(args);
 
-                // If reply.term > currentTerm => step down.  [oai_citation:14‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                // If reply.term > currentTerm => step down.
                 if (reply.term > currentTerm) {
                     becomeFollower(reply.term, null);
                     return;
@@ -263,20 +263,20 @@ public class SimpleRaftV1 {
                 if (reply.voteGranted) votes++;
 
                 if (votes >= majority) {
-                    // Candidate wins if receives majority votes.  [oai_citation:15‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                    // Candidate wins if receives majority votes.
                     becomeLeader();
                     return;
                 }
             }
 
-            // If no winner (split vote), timeout will trigger a new election later.  [oai_citation:16‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // If no winner (split vote), timeout will trigger a new election later.
         }
 
         /**
          * RequestVote receiver implementation:
          * 1) reply false if term < currentTerm
          * 2) if votedFor is null or candidateId, and candidate’s log is at least as up-to-date: grant vote
-         * (Matches RequestVote slide.)  [oai_citation:17‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * (Matches RequestVote slide.)
          */
         RequestVoteReply receiveRequestVote(RequestVoteArgs args) {
             // If candidate term is older, reject immediately.
@@ -312,7 +312,7 @@ public class SimpleRaftV1 {
          * - candidate.lastLogTerm > my.lastLogTerm, OR
          * - terms equal AND candidate.lastLogIndex >= my.lastLogIndex
          *
-         * (Slide: vote granted iff candidate log is up to date.)  [oai_citation:18‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * (Slide: vote granted iff candidate log is up to date.)
          */
         boolean isCandidateLogUpToDate(int candLastIndex, int candLastTerm) {
             int myLastTerm = lastLogTerm();
@@ -325,7 +325,7 @@ public class SimpleRaftV1 {
          * ========================================================= */
 
         void sendHeartbeats() {
-            // Heartbeat = AppendEntries with empty entries list.  [oai_citation:19‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Heartbeat = AppendEntries with empty entries list.
             for (RaftNode p : peers) {
                 if (p.id == this.id) continue;
                 replicateToFollower(p.id); // send entries starting at nextIndex[follower]
@@ -335,7 +335,7 @@ public class SimpleRaftV1 {
         /**
          * Leader replication logic:
          * If last log index >= nextIndex[follower], send AppendEntries starting at nextIndex.
-         * If AppendEntries fails due to inconsistency: decrement nextIndex and retry.  [oai_citation:20‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * If AppendEntries fails due to inconsistency: decrement nextIndex and retry.
          */
         void replicateToFollower(int followerId) {
             if (role != Role.LEADER) return;
@@ -361,7 +361,7 @@ public class SimpleRaftV1 {
 
             AppendEntriesReply reply = follower.receiveAppendEntries(args);
 
-            // If follower has higher term, step down.  [oai_citation:21‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // If follower has higher term, step down.
             if (reply.term > currentTerm) {
                 becomeFollower(reply.term, null);
                 return;
@@ -370,7 +370,7 @@ public class SimpleRaftV1 {
             if (role != Role.LEADER) return;
 
             if (reply.success) {
-                // Success means follower now matches leader up through the new entries.  [oai_citation:22‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                // Success means follower now matches leader up through the new entries.
                 // Update nextIndex and matchIndex.
                 int newMatch = args.prevLogIndex + args.entries.size();
                 matchIndex[followerId] = Math.max(matchIndex[followerId], newMatch);
@@ -380,7 +380,7 @@ public class SimpleRaftV1 {
                 advanceCommitIndexIfPossible();
             } else {
                 // Failure due to log inconsistency:
-                // Decrement nextIndex and retry until logs match.  [oai_citation:23‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                // Decrement nextIndex and retry until logs match.
                 nextIndex[followerId] = Math.max(0, nextIndex[followerId] - 1);
                 // In a real implementation you would retry asynchronously; here we can retry immediately:
                 // replicateToFollower(followerId);
@@ -395,7 +395,7 @@ public class SimpleRaftV1 {
          * 4) append any new entries not already in log
          * 5) if leaderCommit > commitIndex: commitIndex = min(leaderCommit, index of last new entry)
          *
-         * (Matches AppendEntries slides.)  [oai_citation:24‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * (Matches AppendEntries slides.)
          */
         AppendEntriesReply receiveAppendEntries(AppendEntriesArgs args) {
             // Step 1: term check
@@ -403,7 +403,7 @@ public class SimpleRaftV1 {
                 return new AppendEntriesReply(currentTerm, false);
             }
 
-            // If term is newer (or equal but we’re candidate), recognize leader and step down.  [oai_citation:25‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // If term is newer (or equal but we’re candidate), recognize leader and step down.
             if (args.term > currentTerm || role != Role.FOLLOWER) {
                 becomeFollower(args.term, args.leaderId);
             } else {
@@ -432,7 +432,7 @@ public class SimpleRaftV1 {
                 if (logIndex < log.size()) {
                     LogEntry existing = log.get(logIndex);
                     if (existing.term != incoming.term) {
-                        // Conflict: delete existing entry and everything after it.  [oai_citation:26‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+                        // Conflict: delete existing entry and everything after it.
                         while (log.size() > logIndex) log.remove(log.size() - 1);
                         log.add(incoming);
                     } else {
@@ -464,7 +464,7 @@ public class SimpleRaftV1 {
          *  - log[N].term == currentTerm
          * then set commitIndex = N.
          *
-         * (This is the key leader commit rule on the “Rules for Servers: Leaders” slide.)  [oai_citation:27‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * (This is the key leader commit rule on the “Rules for Servers: Leaders” slide.)
          */
         void advanceCommitIndexIfPossible() {
             if (role != Role.LEADER) return;
@@ -494,7 +494,7 @@ public class SimpleRaftV1 {
          *   lastApplied++
          *   apply log[lastApplied] to the state machine
          *
-         * (Rule for all servers slide.)  [oai_citation:28‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * (Rule for all servers slide.)
          */
         void applyCommittedEntries() {
             while (lastApplied < commitIndex) {
@@ -520,7 +520,7 @@ public class SimpleRaftV1 {
 
         /**
          * In Raft, clients send writes to the leader; followers redirect.
-         * Slide: leader accepts client commands, appends to log, replicates, commits on majority, then applies.  [oai_citation:29‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+         * Slide: leader accepts client commands, appends to log, replicates, commits on majority, then applies.
          */
         public void clientProposeCommand(String command) {
             if (role != Role.LEADER) {
@@ -535,14 +535,14 @@ public class SimpleRaftV1 {
             // Leader appends command to local log
             log.add(new LogEntry(currentTerm, command));
 
-            // Replicate to followers (in real system: async + retry indefinitely).  [oai_citation:30‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Replicate to followers (in real system: async + retry indefinitely).
             for (RaftNode p : peers) {
                 if (p.id == this.id) continue;
                 replicateToFollower(p.id);
             }
 
             // After replication attempts, leader may have advanced commitIndex.
-            // Followers learn commitIndex through future AppendEntries (leaderCommit field).  [oai_citation:31‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+            // Followers learn commitIndex through future AppendEntries (leaderCommit field).
             sendHeartbeats(); // ensures followers get updated leaderCommit quickly
         }
 
@@ -557,7 +557,7 @@ public class SimpleRaftV1 {
      * ========================= */
 
     public static void main(String[] args) {
-        // Build a 5-node cluster (odd number to avoid split decisions; majority is N/2+1).  [oai_citation:32‡11-Consensus-Raft-Paxos.pdf](sediment://file_00000000bf2c71f58b20e5b7cc4da861)
+        // Build a 5-node cluster (odd number to avoid split decisions; majority is N/2+1).
         int n = 5;
         List<RaftNode> nodes = new ArrayList<>();
         for (int i = 0; i < n; i++) nodes.add(new RaftNode(i, nodes));
