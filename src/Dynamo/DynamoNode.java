@@ -62,7 +62,7 @@ class DynamoNode {
      * Read state machine:
      * - send read to N nodes
      * - wait for R responses
-     * - return causally-unrelated leaves (siblings) and do read repair.  [oai_citation:10‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * - return causally-unrelated leaves (siblings) and do read repair.
      */
     private GetResult coordinateRead(String key) {
         List<DynamoNode> replicas = cluster.topNReachable(key); // N reachable
@@ -85,7 +85,7 @@ class DynamoNode {
         // 4) compute “leaves”: remove any version that is an ancestor of another
         List<VersionedValue> leaves = pruneAncestors(all);
 
-        // 5) read repair: if a replica returned stale versions, push the latest back.  [oai_citation:11‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+        // 5) read repair: if a replica returned stale versions, push the latest back.
         for (var e : replies.entrySet()) {
             DynamoNode replica = e.getKey();
             List<VersionedValue> replicaVersions = e.getValue();
@@ -104,7 +104,7 @@ class DynamoNode {
      * - generate vector clock for new version
      * - write locally
      * - send to N highest-ranked reachable nodes
-     * - succeed after W acks.  [oai_citation:12‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * - succeed after W acks.
      */
     private void coordinateWrite(String key, String newValue, List<VersionedValue> context /* nullable */) {
         List<DynamoNode> replicas = cluster.topNReachable(key);
@@ -112,10 +112,10 @@ class DynamoNode {
         // 1) Determine parent clocks from context, merge, then increment my entry
         List<VectorClock> parents = new ArrayList<>();
         if (context != null) {
-            for (VersionedValue vv : context) parents.add(vv.vclock);
+            for (VersionedValue vv : context) parents.add(vv.vClock());
         } else {
             // If no context, you’re creating a new branch from whatever you have locally
-            for (VersionedValue vv : getLocal(key)) parents.add(vv.vclock);
+            for (VersionedValue vv : getLocal(key)) parents.add(vv.vClock());
         }
 
         VectorClock merged = VectorClock.mergeAll(parents);
@@ -125,7 +125,7 @@ class DynamoNode {
         // 2) Write locally (this node is coordinator; “always writeable” behavior)
         putLocal(key, newVer);
 
-        // 3) Send to replicas (skip down nodes; if intended node is down, hinted handoff)  [oai_citation:13‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+        // 3) Send to replicas (skip down nodes; if intended node is down, hinted handoff)
         int acks = 1; // local write ack
         for (DynamoNode r : replicas) {
             if (r == this) continue;
@@ -174,7 +174,7 @@ class DynamoNode {
 
     /**
      * Periodic background: try deliver hinted handoff replicas if intended node recovered.
-     * Slides: once transfer succeeds, delete local hint without reducing replica count.  [oai_citation:14‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * Slides: once transfer succeeds, delete local hint without reducing replica count.
      */
     public void runHintedHandoffTick() {
         if (hinted.isEmpty()) return;
@@ -217,7 +217,7 @@ class DynamoNode {
 
         // If any existing dominates new, then new is redundant (don’t store it)
         for (VersionedValue existing : cur) {
-            if (newVer.vclock.isAncestorOf(existing.vclock)) {
+            if (newVer.vClock().isAncestorOf(existing.vClock())) {
                 store.put(key, cur);
                 return;
             }
@@ -226,7 +226,7 @@ class DynamoNode {
         // Remove versions that are ancestors of new
         List<VersionedValue> next = new ArrayList<>();
         for (VersionedValue existing : cur) {
-            if (!existing.vclock.isAncestorOf(newVer.vclock)) next.add(existing);
+            if (!existing.vClock().isAncestorOf(newVer.vClock())) next.add(existing);
         }
         next.add(newVer);
         store.put(key, next);
@@ -241,7 +241,7 @@ class DynamoNode {
             for (int j = 0; j < all.size(); j++) {
                 if (i == j) continue;
                 VersionedValue b = all.get(j);
-                if (a.vclock.isAncestorOf(b.vclock) && !b.vclock.isAncestorOf(a.vclock)) {
+                if (a.vClock().isAncestorOf(b.vClock()) && !b.vClock().isAncestorOf(a.vClock())) {
                     isAncestor = true;
                     break;
                 }
@@ -262,14 +262,14 @@ class DynamoNode {
         // Compare by (value + vclock string) for simplicity
         Set<String> A = new HashSet<>();
         Set<String> B = new HashSet<>();
-        for (var x : a) A.add(x.value + "|" + x.vclock.toString());
-        for (var x : b) B.add(x.value + "|" + x.vclock.toString());
+        for (var x : a) A.add(x.value() + "|" + x.vClock().toString());
+        for (var x : b) B.add(x.value() + "|" + x.vClock().toString());
         return A.equals(B);
     }
 
     private static List<VersionedValue> dedupe(List<VersionedValue> xs) {
         Map<String, VersionedValue> m = new LinkedHashMap<>();
-        for (var x : xs) m.put(x.value + "|" + x.vclock.toString(), x);
+        for (var x : xs) m.put(x.value() + "|" + x.vClock().toString(), x);
         return new ArrayList<>(m.values());
     }
 

@@ -54,7 +54,7 @@ class DynamoCluster {
 
     /**
      * The "top N healthy nodes" from the preference list.
-     * Slides: coordinator sends to first N healthy nodes, skipping down ones.  [oai_citation:6‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * Slides: coordinator sends to first N healthy nodes, skipping down ones.
      */
     public List<DynamoNode> topNReachable(String key) {
         List<DynamoNode> pref = preferenceList(key);

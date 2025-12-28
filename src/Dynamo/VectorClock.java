@@ -46,22 +46,21 @@ class VectorClock {
     @Override public String toString() { return clock.toString(); }
 }
 
-class VersionedValue {
-    public final String value;          // keep String for simplicity
-    public final VectorClock vclock;
+/**
+ * @param value keep String for simplicity
+ */
+record VersionedValue(String value, VectorClock vClock) {
 
-    public VersionedValue(String value, VectorClock vc) {
-        this.value = value;
-        this.vclock = vc;
-    }
-
-    @Override public String toString() {
-        return "VersionedValue{value=" + value + ", vc=" + vclock + "}";
+    @Override
+    public String toString() {
+        return "VersionedValue{value=" + value + ", vc=" + vClock + "}";
     }
 }
 
-/** What Dynamo returns to the client: the "siblings" plus their clocks (context). */
-class GetResult {
-    public final List<VersionedValue> siblings; // 1 if syntactic reconciliation possible, >1 if conflict
-    public GetResult(List<VersionedValue> siblings) { this.siblings = siblings; }
+/**
+ * What Dynamo returns to the client: the "siblings" plus their clocks (context).
+ *
+ * @param siblings 1 if syntactic reconciliation possible, >1 if conflict
+ */
+record GetResult(List<VersionedValue> siblings) {
 }
