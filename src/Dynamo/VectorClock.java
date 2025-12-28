@@ -2,65 +2,76 @@ package Dynamo;
 
 import java.util.*;
 
-/** Vector clock: map nodeId -> counter */
+/**
+ * VectorClock
+ *
+ * Tracks causality between versions.
+ *
+ * Each entry:
+ *   nodeId → counter
+ *
+ * Used by Dynamo to:
+ *  - detect concurrent writes
+ *  - prune obsolete versions
+ */
 class VectorClock {
+
     private final Map<String, Integer> clock = new HashMap<>();
 
+    /** Creates a deep copy of this vector clock. */
     public VectorClock copy() {
         VectorClock vc = new VectorClock();
         vc.clock.putAll(this.clock);
         return vc;
     }
 
+    /** Increments this node’s logical time. */
     public void increment(String nodeId) {
         clock.put(nodeId, clock.getOrDefault(nodeId, 0) + 1);
     }
 
-    /** Merge = elementwise max (used when creating a new version from multiple parents). */
+    /**
+     * Merges multiple parent clocks using element-wise max.
+     */
     public static VectorClock mergeAll(List<VectorClock> parents) {
         VectorClock merged = new VectorClock();
         for (VectorClock p : parents) {
             for (var e : p.clock.entrySet()) {
-                merged.clock.put(e.getKey(), Math.max(merged.clock.getOrDefault(e.getKey(), 0), e.getValue()));
+                merged.clock.put(
+                        e.getKey(),
+                        Math.max(merged.clock.getOrDefault(e.getKey(), 0), e.getValue())
+                );
             }
         }
         return merged;
     }
 
     /**
-     * Returns true if this <= other for all entries (treat missing as 0).
-     * If so, this is an ancestor of other (can be discarded on read).
+     * Returns true if this clock is causally before (≤) another.
      */
     public boolean isAncestorOf(VectorClock other) {
-        // For every node in union(this, other): thisCount <= otherCount
-        Set<String> all = new HashSet<>(this.clock.keySet());
+        Set<String> all = new HashSet<>(clock.keySet());
         all.addAll(other.clock.keySet());
+
         for (String n : all) {
-            int a = this.clock.getOrDefault(n, 0);
-            int b = other.clock.getOrDefault(n, 0);
-            if (a > b) return false;
+            if (clock.getOrDefault(n, 0) > other.clock.getOrDefault(n, 0))
+                return false;
         }
         return true;
     }
 
-    @Override public String toString() { return clock.toString(); }
-}
-
-/**
- * @param value keep String for simplicity
- */
-record VersionedValue(String value, VectorClock vClock) {
-
     @Override
     public String toString() {
-        return "VersionedValue{value=" + value + ", vc=" + vClock + "}";
+        return clock.toString();
     }
 }
 
 /**
- * What Dynamo returns to the client: the "siblings" plus their clocks (context).
- *
- * @param siblings 1 if syntactic reconciliation possible, >1 if conflict
+ * Value paired with a vector clock.
  */
-record GetResult(List<VersionedValue> siblings) {
-}
+record VersionedValue(String value, VectorClock vClock) {}
+
+/**
+ * Result returned to client on GET.
+ */
+record GetResult(List<VersionedValue> siblings) {}

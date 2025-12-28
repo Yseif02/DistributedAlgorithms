@@ -3,18 +3,54 @@ package Dynamo;
 import java.math.BigInteger;
 import java.util.*;
 
+/**
+ * DynamoNode
+ *
+ * Represents a single Dynamo storage node.
+ *
+ * A node can act as:
+ *  - coordinator (for some keys)
+ *  - replica (for keys coordinated by others)
+ *
+ * Dynamo is *leaderless*:
+ *  - any node can accept reads/writes
+ *  - requests are forwarded to the key’s coordinator
+ */
 class DynamoNode {
-    public final String nodeId;
-    public final BigInteger token;     // ring position
-    public boolean isUp = true;
-    public DynamoCluster cluster;
 
-    // Store: key -> list of siblings (concurrent versions)
+    /* =========================================================
+     * Identity and cluster membership
+     * ========================================================= */
+
+    public final String nodeId;
+    public final BigInteger token;   // position on the consistent hash ring
+
+    public boolean isUp = true;
+    // Used to simulate failures
+
+    public DynamoCluster cluster;
+    // Set by DynamoCluster constructor
+
+    /* =========================================================
+     * Local storage
+     * ========================================================= */
+
+    /**
+     * Main key-value store.
+     *
+     * Key → list of versions (siblings).
+     *
+     * Dynamo allows multiple concurrent versions
+     * instead of forcing a total order.
+     */
     private final Map<String, List<VersionedValue>> store = new HashMap<>();
 
     /**
-     * Hinted handoff store: (intendedNodeId, key) -> versions.
-     * Slides: if A is down, B stores with metadata “intended recipient”.  [oai_citation:7‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * Hinted handoff storage.
+     *
+     * If a replica is down, another node temporarily
+     * stores its data along with metadata indicating
+     * the intended recipient.
      */
     private final Map<String, List<VersionedValue>> hinted = new HashMap<>();
 
@@ -23,98 +59,115 @@ class DynamoNode {
         this.token = token;
     }
 
-    // ----------------------------
-    // CLIENT-FACING API (GET/PUT)
-    // ----------------------------
+    /* =========================================================
+     * CLIENT-FACING API
+     * ========================================================= */
 
     /**
-     * Any node can receive get/put.
-     * If not in top N of preference list, forward to first among top N.  [oai_citation:8‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * Client GET operation.
+     *
+     * Any node can receive the request.
+     * If this node is not the coordinator, forward
+     * to the coordinator.
      */
     public GetResult clientGet(String key) {
         List<DynamoNode> prefTop = cluster.topNReachable(key);
         DynamoNode coordinator = prefTop.get(0);
+
         if (coordinator != this) {
-            return coordinator.clientGet(key); // “magical network”
+            return coordinator.clientGet(key);
         }
-        return coordinator.coordinateRead(key);
+        return coordinateRead(key);
     }
 
     /**
-     * Client PUT includes optional context: the versions it is updating (siblings from prior read).
-     * Slides: client must specify which version it updates via context; subsequent write collapses branches.  [oai_citation:9‡07-Replication (1).pdf](sediment://file_00000000679071fd83f7ca12d8d16b10)
+     * Client PUT operation.
+     *
+     * The client optionally supplies context (vector clocks)
+     * from a previous read.
+     *
+     * Providing context allows the system to:
+     *  - collapse branches
+     *  - avoid unnecessary conflicts
      */
-    public void clientPut(String key, String newValue, List<VersionedValue> context /* nullable */) {
+    public void clientPut(String key, String newValue, List<VersionedValue> context) {
         List<DynamoNode> prefTop = cluster.topNReachable(key);
         DynamoNode coordinator = prefTop.get(0);
+
         if (coordinator != this) {
             coordinator.clientPut(key, newValue, context);
             return;
         }
-        coordinator.coordinateWrite(key, newValue, context);
+        coordinateWrite(key, newValue, context);
     }
 
-    // ----------------------------
-    // COORDINATOR LOGIC (STATE MACHINES)
-    // ----------------------------
+    /* =========================================================
+     * COORDINATOR READ PATH
+     * ========================================================= */
 
     /**
-     * Read state machine:
-     * - send read to N nodes
-     * - wait for R responses
-     * - return causally-unrelated leaves (siblings) and do read repair.
+     * Implements Dynamo’s read state machine.
+     *
+     * Steps:
+     *  1. Send read requests to N replicas
+     *  2. Wait for R responses
+     *  3. Merge versions
+     *  4. Remove ancestor versions
+     *  5. Perform read repair if needed
      */
     private GetResult coordinateRead(String key) {
-        List<DynamoNode> replicas = cluster.topNReachable(key); // N reachable
+        List<DynamoNode> replicas = cluster.topNReachable(key);
         Map<DynamoNode, List<VersionedValue>> replies = new HashMap<>();
 
-        // 1) send read requests (in real Dynamo: async + timeout)
+        // Send read requests
         for (DynamoNode n : replicas) {
             replies.put(n, n.onReplicaRead(key));
         }
 
-        // 2) wait for R replies (here: assume immediate; if <R, fail)
         if (replies.size() < cluster.R) {
-            throw new RuntimeException("Read failed: not enough replicas reachable");
+            throw new RuntimeException("Read failed: insufficient replicas");
         }
 
-        // 3) merge all versions we got
+        // Merge all returned versions
         List<VersionedValue> all = new ArrayList<>();
-        for (List<VersionedValue> vv : replies.values()) all.addAll(vv);
+        for (List<VersionedValue> vv : replies.values()) {
+            all.addAll(vv);
+        }
 
-        // 4) compute “leaves”: remove any version that is an ancestor of another
+        // Keep only leaf versions
         List<VersionedValue> leaves = pruneAncestors(all);
 
-        // 5) read repair: if a replica returned stale versions, push the latest back.
+        // Read repair: update stale replicas
         for (var e : replies.entrySet()) {
-            DynamoNode replica = e.getKey();
-            List<VersionedValue> replicaVersions = e.getValue();
-            if (isStale(replicaVersions, leaves)) {
-                replica.onReplicaWriteRepair(key, leaves);
+            if (isStale(e.getValue(), leaves)) {
+                e.getKey().onReplicaWriteRepair(key, leaves);
             }
         }
 
-        // If leaves.size() == 1, caller can treat it as syntactically reconciled.
-        // If >1, this is a conflict: return all siblings (application may reconcile).
         return new GetResult(leaves);
     }
 
+    /* =========================================================
+     * COORDINATOR WRITE PATH
+     * ========================================================= */
+
     /**
-     * Write state machine:
-     * - generate vector clock for new version
-     * - write locally
-     * - send to N highest-ranked reachable nodes
-     * - succeed after W acks.
+     * Implements Dynamo’s write state machine.
+     *
+     * Steps:
+     *  1. Merge parent vector clocks
+     *  2. Increment coordinator’s clock
+     *  3. Write locally
+     *  4. Replicate to N replicas
+     *  5. Return success after W acknowledgements
      */
-    private void coordinateWrite(String key, String newValue, List<VersionedValue> context /* nullable */) {
+    private void coordinateWrite(String key, String newValue, List<VersionedValue> context) {
         List<DynamoNode> replicas = cluster.topNReachable(key);
 
-        // 1) Determine parent clocks from context, merge, then increment my entry
         List<VectorClock> parents = new ArrayList<>();
         if (context != null) {
             for (VersionedValue vv : context) parents.add(vv.vClock());
         } else {
-            // If no context, you’re creating a new branch from whatever you have locally
             for (VersionedValue vv : getLocal(key)) parents.add(vv.vClock());
         }
 
@@ -122,32 +175,26 @@ class DynamoNode {
         merged.increment(this.nodeId);
         VersionedValue newVer = new VersionedValue(newValue, merged);
 
-        // 2) Write locally (this node is coordinator; “always writeable” behavior)
         putLocal(key, newVer);
 
-        // 3) Send to replicas (skip down nodes; if intended node is down, hinted handoff)
-        int acks = 1; // local write ack
+        int acks = 1;
         for (DynamoNode r : replicas) {
             if (r == this) continue;
-            boolean ok = sendReplicaPut(r, key, newVer);
-            if (ok) acks++;
+            if (sendReplicaPut(r, key, newVer)) acks++;
             if (acks >= cluster.W) break;
         }
 
         if (acks < cluster.W) {
-            // Dynamo can still choose to return success depending on configuration;
-            // here we mimic the spec: need W acknowledgements.
-            throw new RuntimeException("Write failed: not enough replicas acked");
+            throw new RuntimeException("Write failed: insufficient acknowledgements");
         }
     }
 
-    // ----------------------------
-    // “NETWORK” SEND/RECEIVE (REPLICA MESSAGES)
-    // ----------------------------
+    /* =========================================================
+     * REPLICA HANDLERS
+     * ========================================================= */
 
     private boolean sendReplicaPut(DynamoNode target, String key, VersionedValue v) {
         if (!target.isUp) {
-            // hinted handoff: store on *this* node tagged for target
             String hintKey = target.nodeId + "|" + key;
             hinted.computeIfAbsent(hintKey, k -> new ArrayList<>()).add(v);
             return false;
@@ -156,66 +203,64 @@ class DynamoNode {
         return true;
     }
 
-    /** Replica handler for PUT from coordinator. */
     private void onReplicaPut(String key, VersionedValue v) {
         putLocal(key, v);
     }
 
-    /** Replica handler for READ from coordinator. */
     private List<VersionedValue> onReplicaRead(String key) {
         return new ArrayList<>(getLocal(key));
     }
 
-    /** Read repair handler: coordinator pushes latest leaf set to stale replica. */
     private void onReplicaWriteRepair(String key, List<VersionedValue> latestLeaves) {
-        // Simplest repair: replace local versions with latest leaves
         store.put(key, new ArrayList<>(latestLeaves));
     }
 
+    /* =========================================================
+     * HINTED HANDOFF
+     * ========================================================= */
+
     /**
-     * Periodic background: try deliver hinted handoff replicas if intended node recovered.
-     * Slides: once transfer succeeds, delete local hint without reducing replica count.
+     * Periodically attempts to deliver hinted data
+     * back to recovered replicas.
      */
     public void runHintedHandoffTick() {
-        if (hinted.isEmpty()) return;
-
         Iterator<Map.Entry<String, List<VersionedValue>>> it = hinted.entrySet().iterator();
+
         while (it.hasNext()) {
             var e = it.next();
             String[] parts = e.getKey().split("\\|", 2);
-            String intendedNodeId = parts[0];
-            String key = parts[1];
+            DynamoNode intended = findNode(parts[0]);
 
-            DynamoNode intended = findNode(intendedNodeId);
             if (intended != null && intended.isUp) {
                 for (VersionedValue v : e.getValue()) {
-                    intended.onReplicaPut(key, v);
+                    intended.onReplicaPut(parts[1], v);
                 }
-                it.remove(); // delete hint after successful transfer
+                it.remove();
             }
         }
     }
 
     private DynamoNode findNode(String id) {
-        for (DynamoNode n : cluster.ring) if (n.nodeId.equals(id)) return n;
+        for (DynamoNode n : cluster.ring)
+            if (n.nodeId.equals(id)) return n;
         return null;
     }
 
-    // ----------------------------
-    // LOCAL STORAGE + VERSION PRUNING
-    // ----------------------------
+    /* =========================================================
+     * LOCAL VERSION MANAGEMENT
+     * ========================================================= */
 
     private List<VersionedValue> getLocal(String key) {
         return store.getOrDefault(key, new ArrayList<>());
     }
 
+    /**
+     * Inserts a new version while enforcing
+     * Dynamo’s version-pruning rules.
+     */
     private void putLocal(String key, VersionedValue newVer) {
-        // Dynamo keeps multiple versions; but most new versions subsume old ones.
-        // Keep all versions that are NOT ancestors of the new one; also if new one
-        // is an ancestor of an existing one, keep existing (it dominates new).
         List<VersionedValue> cur = new ArrayList<>(getLocal(key));
 
-        // If any existing dominates new, then new is redundant (don’t store it)
         for (VersionedValue existing : cur) {
             if (newVer.vClock().isAncestorOf(existing.vClock())) {
                 store.put(key, cur);
@@ -223,55 +268,50 @@ class DynamoNode {
             }
         }
 
-        // Remove versions that are ancestors of new
         List<VersionedValue> next = new ArrayList<>();
         for (VersionedValue existing : cur) {
-            if (!existing.vClock().isAncestorOf(newVer.vClock())) next.add(existing);
+            if (!existing.vClock().isAncestorOf(newVer.vClock()))
+                next.add(existing);
         }
         next.add(newVer);
         store.put(key, next);
     }
 
-    /** Leaves = versions that are not ancestors of any other version. */
+    /* =========================================================
+     * VERSION COMPARISON HELPERS
+     * ========================================================= */
+
     private static List<VersionedValue> pruneAncestors(List<VersionedValue> all) {
         List<VersionedValue> leaves = new ArrayList<>();
-        for (int i = 0; i < all.size(); i++) {
-            VersionedValue a = all.get(i);
-            boolean isAncestor = false;
-            for (int j = 0; j < all.size(); j++) {
-                if (i == j) continue;
-                VersionedValue b = all.get(j);
-                if (a.vClock().isAncestorOf(b.vClock()) && !b.vClock().isAncestorOf(a.vClock())) {
-                    isAncestor = true;
+
+        for (VersionedValue a : all) {
+            boolean ancestor = false;
+            for (VersionedValue b : all) {
+                if (a != b && a.vClock().isAncestorOf(b.vClock())) {
+                    ancestor = true;
                     break;
                 }
             }
-            if (!isAncestor) leaves.add(a);
+            if (!ancestor) leaves.add(a);
         }
-        return dedupe(leaves);
+        return leaves;
     }
 
     private static boolean isStale(List<VersionedValue> replica, List<VersionedValue> leaves) {
-        // Stale if replica is missing any leaf or has only ancestors of leaves.
-        // Simple heuristic: if replica set exactly equals leaves -> not stale.
         return !sameSet(replica, leaves);
     }
 
     private static boolean sameSet(List<VersionedValue> a, List<VersionedValue> b) {
         if (a.size() != b.size()) return false;
-        // Compare by (value + vclock string) for simplicity
         Set<String> A = new HashSet<>();
         Set<String> B = new HashSet<>();
-        for (var x : a) A.add(x.value() + "|" + x.vClock().toString());
-        for (var x : b) B.add(x.value() + "|" + x.vClock().toString());
+        for (var x : a) A.add(x.value() + "|" + x.vClock());
+        for (var x : b) B.add(x.value() + "|" + x.vClock());
         return A.equals(B);
     }
 
-    private static List<VersionedValue> dedupe(List<VersionedValue> xs) {
-        Map<String, VersionedValue> m = new LinkedHashMap<>();
-        for (var x : xs) m.put(x.value() + "|" + x.vClock().toString(), x);
-        return new ArrayList<>(m.values());
+    @Override
+    public String toString() {
+        return "Node(" + nodeId + ")";
     }
-
-    @Override public String toString() { return "Node(" + nodeId + ")"; }
 }
